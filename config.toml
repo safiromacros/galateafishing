@@ -1,0 +1,44 @@
+
+[general]
+	player_ign = ""
+	macro_enabled = false
+	damage_per_hit = 0.0
+	cleanup_enabled = false
+	strider_mode = 0
+	onetap_enabled = true
+	xp_per_catch = 1.0
+
+[cleanup]
+	"kill_click_interval_(ms)" = 220
+	"kill_click_jitter_(ms)" = 30
+	kill_yaw_step = 8.0
+	kill_yaw_threshold = 12.0
+	no_target_ticks = 25
+	"kill_range_(blocks)" = 2.0
+	kill_pitch_threshold = 10.0
+	kill_pitch_step = 6.0
+	return_yaw_threshold = 1.5
+	return_pitch_threshold = 1.0
+
+[fishing]
+	"stabilize_min_(ms)" = 500
+	"cast_cooldown_(ms)" = 100
+	"recast_max_(ms)" = 450
+	"human_pause_max_(ms)" = 250
+	"stabilize_max_(ms)" = 900
+	"armor_check_interval_(ms)" = 120
+	"detect_max_(ms)" = 160
+	armor_name = "!!!"
+	"detect_min_(ms)" = 80
+	"recast_min_(ms)" = 200
+	"human_pause_min_(ms)" = 150
+
+[strider_routine]
+	"strider_slot_(1-9)" = 2
+	"left_click_jitter_(ms)" = 30
+	"flay_slot_2_(1-9)" = 2
+	"strider_jitter_(ms)" = 5000
+	"strider_base_(ms)" = 90000
+	"left_click_interval_(ms)" = 250
+	"flay_slot_3_(1-9)" = 3
+
