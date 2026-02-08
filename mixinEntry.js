@@ -1,29 +1,57 @@
 /// <reference types="../CTAutocomplete" />
 /// <reference lib="es2015" />
 
-const mc = Client.getMinecraft();
+function getMinecraft() {
+    try {
+        if (typeof Client === "undefined") return null;
+        return Client.getMinecraft();
+    } catch (e) {
+        return null;
+    }
+}
 
-const LEFT_CLICK_METHOD = mc.getClass().getDeclaredMethod('method_1536');
-const RIGHT_CLICK_METHOD = mc.getClass().getDeclaredMethod('method_1583');
-LEFT_CLICK_METHOD.setAccessible(true);
-RIGHT_CLICK_METHOD.setAccessible(true);
+function getClickMethods(mc) {
+    if (!mc) return null;
+    try {
+        const left = mc.getClass().getDeclaredMethod('method_1536');
+        const right = mc.getClass().getDeclaredMethod('method_1583');
+        left.setAccessible(true);
+        right.setAccessible(true);
+        return { left: left, right: right };
+    } catch (e) {
+        return null;
+    }
+}
 
 function triggerLeftClick() {
+    if (typeof Client === "undefined") return;
     if (Client.isInGui() && !Client.isInChat()) {
         return Chat.message('Left click suppressed: User in menu.');
     }
-    LEFT_CLICK_METHOD.invoke(mc);
+    const mc = getMinecraft();
+    const methods = getClickMethods(mc);
+    if (!methods) return;
+    methods.left.invoke(mc);
 }
 
 function triggerRightClick() {
+    if (typeof Client === "undefined") return;
     if (Client.isInGui() && !Client.isInChat()) {
         return Chat.message('Right click suppressed: User in menu.');
     }
-    RIGHT_CLICK_METHOD.invoke(mc);
+    const mc = getMinecraft();
+    const methods = getClickMethods(mc);
+    if (!methods) return;
+    methods.right.invoke(mc);
 }
 
 function startSneaking() {
     try {
+        const mc = getMinecraft();
+        if (!mc) {
+            ChatLib.chat("&cNo Client available");
+            return false;
+        }
         // Get the game options
         const options = mc.field_1690 || mc.options;
         if (!options) {
@@ -56,6 +84,11 @@ function startSneaking() {
 
 function stopSneaking() {
     try {
+        const mc = getMinecraft();
+        if (!mc) {
+            ChatLib.chat("&cNo Client available");
+            return false;
+        }
         // Get the game options
         const options = mc.field_1690 || mc.options;
         if (!options) {

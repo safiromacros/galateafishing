@@ -60,9 +60,109 @@ var XP_PER_STRIDER = 1851.8;
 
 var striderCountAtMacroStart = 0;
 
+// Extra strider cleanup (rotation + left click only)
+var KILL_RANGE = 2.0;
+var KILL_CLICK_INTERVAL = 220;
+var KILL_CLICK_JITTER = 30;
+var KILL_YAW_THRESHOLD = 12.0;
+var KILL_PITCH_THRESHOLD = 10.0;
+var KILL_YAW_STEP = 8.0;
+var KILL_PITCH_STEP = 6.0;
+var KILL_RETURN_YAW_THRESHOLD = 1.5;
+var KILL_RETURN_PITCH_THRESHOLD = 1.0;
+var KILL_NO_TARGET_TICKS = 25;
+
+// Rotation tuning borrowed from Pathfinder module for smooth aiming
+var ROT_MAX_YAW = 60.0;
+var ROT_MAX_PITCH = 26.0;
+var ROT_ACCEL = 0.26;
+var ROT_SMOOTH = 0.64;
+var ROT_NOISE = 0.06;
+var LOOK_SMOOTH = 0.2;
+
+var killRoutineActive = false;
+var killRoutineMode = "strider";
+var nextKillClick = 0;
+var killYawVel = 0;
+var killPitchVel = 0;
+var killSmoothYaw = null;
+var killSmoothPitch = null;
+var killNoiseTick = 0;
+var killRotationNoise = { yaw: 0, pitch: 0 };
+var killNoTargetTicks = 0;
+var cleanupEnabled = false;
+var cleanupAfterStrider = false;
+var cleanupReturning = false;
+var cleanupReturnYaw = 0;
+var cleanupReturnPitch = 0;
+var striderStartYaw = 0;
+var striderStartPitch = 0;
+
 
 function random(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function normalizeAngle(a) { while (a > 180) a -= 360; while (a < -180) a += 360; return a; }
+function angleDiff(a, b) { return normalizeAngle(b - a); }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function getPlayerEyePos() {
+    var p = Player.getPlayer();
+    return { x: p.getX(), y: p.getY() + 1.62, z: p.getZ() };
+}
+
+function getEntityAimPos(e) {
+    try {
+        var y = e.getY();
+        if (typeof e.getHeight === "function") {
+            y += e.getHeight() * 0.6;
+        } else {
+            y += 1.0;
+        }
+        return { x: e.getX(), y: y, z: e.getZ() };
+    } catch (err) {
+        return null;
+    }
+}
+
+function resetKillRotation() {
+    killYawVel = 0;
+    killPitchVel = 0;
+    killSmoothYaw = null;
+    killSmoothPitch = null;
+    killNoiseTick = 0;
+    killRotationNoise = { yaw: 0, pitch: 0 };
+    killNoTargetTicks = 0;
+}
+
+function beginCleanupAfterStrider() {
+    cleanupAfterStrider = true;
+    cleanupReturning = false;
+    cleanupReturnYaw = striderStartYaw;
+    cleanupReturnPitch = striderStartPitch;
+    killRoutineMode = "strider";
+    killRoutineActive = true;
+    nextKillClick = 0;
+    resetKillRotation();
+}
+
+function finishStriderRoutineDirect() {
+    if (enabled) castRod();
+    scheduleNextStriderBreak();
+    striderRoutineActive = false;
+}
+
+function finishStriderRoutineAfterCleanup() {
+    cleanupAfterStrider = false;
+    cleanupReturning = false;
+    try {
+        Player.getPlayer().setYaw(cleanupReturnYaw);
+        Player.getPlayer().setPitch(cleanupReturnPitch);
+    } catch (e) {}
+    if (enabled) castRod();
+    scheduleNextStriderBreak();
+    striderRoutineActive = false;
 }
 
 function scheduleNextStriderBreak() {
@@ -134,6 +234,85 @@ function safeLeftClick() {
         } catch (e) {}
         try { Player.leftClick(); } catch (e) {}
     });
+}
+
+function isKillTargetName(name, mode) {
+    var n = String(name || "").toLowerCase();
+    return n.indexOf("strider") !== -1;
+}
+
+function findKillTarget(mode) {
+    try {
+        var p = Player.getPlayer();
+        if (!p) return null;
+        var px = p.getX();
+        var py = p.getY();
+        var pz = p.getZ();
+        var playerName = "";
+        try { playerName = String(p.getName()); } catch (e) {}
+
+        var ents = World.getAllEntities();
+        var rangeSq = KILL_RANGE * KILL_RANGE;
+        var best = null;
+        var bestDist = 1e9;
+        for (var i = 0; i < ents.length; i++) {
+            var e = ents[i];
+            if (!e || typeof e.getName !== "function") continue;
+            var name = String(e.getName()).replace(/Ã‚Â§./g, "");
+            if (playerName && name === playerName) continue;
+            if (!isKillTargetName(name, mode)) continue;
+
+            var dx = e.getX() - px;
+            var dy = e.getY() - py;
+            var dz = e.getZ() - pz;
+            var dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 > rangeSq) continue;
+            if (dist2 < bestDist) {
+                bestDist = dist2;
+                best = e;
+            }
+        }
+        return best;
+    } catch (e) {
+        return null;
+    }
+}
+
+function getDesiredKillAngles(target) {
+    var eye = getPlayerEyePos();
+    var aim = getEntityAimPos(target);
+    if (!aim) return null;
+
+    var dx = aim.x - eye.x;
+    var dy = aim.y - eye.y;
+    var dz = aim.z - eye.z;
+    var distXZ = Math.sqrt(dx * dx + dz * dz);
+    var desiredYaw = (Math.atan2(dz, dx) * 180 / Math.PI) - 90;
+    var desiredPitch = -(Math.atan2(dy, distXZ) * 180 / Math.PI);
+
+    return {
+        yaw: normalizeAngle(desiredYaw),
+        pitch: clamp(desiredPitch, -90, 90)
+    };
+}
+
+function applyKillRotation(desiredYaw, desiredPitch) {
+    var currentYaw = Player.getYaw();
+    var currentPitch = Player.getPitch();
+
+    var yawDiff = angleDiff(currentYaw, desiredYaw);
+    var pitchDiff = angleDiff(currentPitch, desiredPitch);
+
+    var yawStep = clamp(yawDiff, -KILL_YAW_STEP, KILL_YAW_STEP);
+    var pitchStep = clamp(pitchDiff, -KILL_PITCH_STEP, KILL_PITCH_STEP);
+
+    var newYaw = normalizeAngle(currentYaw + yawStep);
+    var newPitch = clamp(currentPitch + pitchStep, -90, 90);
+
+    try {
+        Player.getPlayer().setYaw(newYaw);
+        Player.getPlayer().setPitch(newPitch);
+    } catch (e) {}
 }
 
 function safeSneak() {
@@ -226,6 +405,13 @@ function startStriderRoutine() {
     if (isGuiBlocked() || guiPaused) return;
     if (striderRoutineActive) return;
     striderRoutineActive = true;
+    try {
+        striderStartYaw = Player.getYaw();
+        striderStartPitch = Player.getPitch();
+    } catch (e) {
+        striderStartYaw = 0;
+        striderStartPitch = 0;
+    }
 
     ChatLib.chat(PREFIX + "&fStarting strider routine &8(&b" + striderMode + "&8)&f.");
 
@@ -255,9 +441,11 @@ function startStriderRoutine() {
                             setSlot(savedSlot);
 
                             setTimeout(function () {
-                                if (enabled) castRod();
-                                scheduleNextStriderBreak();
-                                striderRoutineActive = false;
+                                if (cleanupEnabled) {
+                                    beginCleanupAfterStrider();
+                                } else {
+                                    finishStriderRoutineDirect();
+                                }
                             }, random(150, 300));
                         }, 200 + random(-15, 15));
                     }, 50);
@@ -295,9 +483,11 @@ function startStriderRoutine() {
                 setSlot(savedSlot);
 
                 setTimeout(function () {
-                    if (enabled) castRod();
-                    scheduleNextStriderBreak();
-                    striderRoutineActive = false;
+                    if (cleanupEnabled) {
+                        beginCleanupAfterStrider();
+                    } else {
+                        finishStriderRoutineDirect();
+                    }
                 }, random(150, 300));
             }
         }
@@ -323,6 +513,27 @@ function countArmorStands() {
     }
 }
 
+function toggleCleanupMode() {
+    cleanupEnabled = !cleanupEnabled;
+    ChatLib.chat(PREFIX + "&fCleanup mode: " + (cleanupEnabled ? "&aenabled" : "&cdisabled") + "&f.");
+
+    if (!cleanupEnabled) {
+        if (killRoutineActive && killRoutineMode === "strider") {
+            killRoutineActive = false;
+            resetKillRotation();
+        }
+        if (cleanupAfterStrider || cleanupReturning) {
+            cleanupAfterStrider = false;
+            cleanupReturning = false;
+            try {
+                Player.getPlayer().setYaw(cleanupReturnYaw);
+                Player.getPlayer().setPitch(cleanupReturnPitch);
+            } catch (e) {}
+            if (striderRoutineActive) finishStriderRoutineDirect();
+        }
+    }
+}
+
 
 register("step", function () {
     var now = Date.now();
@@ -337,8 +548,56 @@ register("step", function () {
             ChatLib.chat(PREFIX + "&fMacro stopped because a menu is open.");
             ChatLib.chat(PREFIX + "&fUse &b/safiro toggle&f to start again.");
         }
+        if (killRoutineActive) {
+            killRoutineActive = false;
+            resetKillRotation();
+            ChatLib.chat(PREFIX + "&fKill routine stopped because a menu is open.");
+        }
+        if (cleanupReturning || cleanupAfterStrider) {
+            cleanupReturning = false;
+            cleanupAfterStrider = false;
+        }
         return;
     }
+
+    if (killRoutineActive) {
+        var target = findKillTarget(killRoutineMode);
+        if (target) {
+            killNoTargetTicks = 0;
+            var desired = getDesiredKillAngles(target);
+            if (desired) {
+                applyKillRotation(desired.yaw, desired.pitch);
+
+                var yawDiff = Math.abs(angleDiff(Player.getYaw(), desired.yaw));
+                var pitchDiff = Math.abs(angleDiff(Player.getPitch(), desired.pitch));
+                if (Date.now() >= nextKillClick && yawDiff <= KILL_YAW_THRESHOLD && pitchDiff <= KILL_PITCH_THRESHOLD) {
+                    safeLeftClick();
+                    nextKillClick = Date.now() + KILL_CLICK_INTERVAL + random(-KILL_CLICK_JITTER, KILL_CLICK_JITTER);
+                }
+            }
+        } else {
+            killNoTargetTicks++;
+            if (killNoTargetTicks >= KILL_NO_TARGET_TICKS) {
+                killRoutineActive = false;
+                resetKillRotation();
+                if (cleanupAfterStrider) {
+                    cleanupReturning = true;
+                } else {
+                    ChatLib.chat(PREFIX + "&fNo targets found. Kill routine stopped.");
+                }
+            }
+        }
+    }
+
+    if (cleanupReturning) {
+        applyKillRotation(cleanupReturnYaw, cleanupReturnPitch);
+        var yawDiff2 = Math.abs(angleDiff(Player.getYaw(), cleanupReturnYaw));
+        var pitchDiff2 = Math.abs(angleDiff(Player.getPitch(), cleanupReturnPitch));
+        if (yawDiff2 <= KILL_RETURN_YAW_THRESHOLD && pitchDiff2 <= KILL_RETURN_PITCH_THRESHOLD) {
+            finishStriderRoutineAfterCleanup();
+        }
+    }
+
 
     if (enabled && !striderRoutineActive) {
         if (!nextStriderBreak) scheduleNextStriderBreak();
@@ -379,6 +638,7 @@ function showHelp() {
     ChatLib.chat("&b/safiro <ign>&7 - Set your IGN (required to start)");
     ChatLib.chat("&b/safiro toggle&7 - Enable or disable the macro");
     ChatLib.chat("&b/safiro strider&7 - Run a strider routine now");
+    ChatLib.chat("&b/safiro cleanup&7 - Toggle cleanup after strider routine");
     ChatLib.chat("&b/safiro melee&7 - Set strider mode to melee");
     ChatLib.chat("&b/safiro flay&7 - Set strider mode to flay");
     ChatLib.chat("&b/safiro onetap&7 - Toggle onetap mode");
@@ -395,7 +655,7 @@ function handleCommand(args) {
     if (args.length > 0 && args[0] !== undefined && args[0] !== null) subRaw = String(args[0]);
     var sub = subRaw.toLowerCase();
 
-    if (sub !== "" && sub !== "toggle" && sub !== "strider" && sub !== "melee" && sub !== "flay" && sub !== "onetap" && sub !== "damage" && sub !== "status" && sub !== "resetstats" && sub !== "setxp" && sub !== "help") {
+    if (sub !== "" && sub !== "toggle" && sub !== "strider" && sub !== "kill" && sub !== "cleanup" && sub !== "melee" && sub !== "flay" && sub !== "onetap" && sub !== "damage" && sub !== "status" && sub !== "resetstats" && sub !== "setxp" && sub !== "help") {
         playerIgn = subRaw;
         ChatLib.chat(PREFIX + "&fIGN set to &b" + playerIgn + "&f.");
         return;
@@ -421,6 +681,12 @@ function handleCommand(args) {
             macroStart = null;
             state = "IDLE";
             armorWatcherActive = false;
+            if (killRoutineActive) {
+                killRoutineActive = false;
+                resetKillRotation();
+            }
+            cleanupAfterStrider = false;
+            cleanupReturning = false;
             ChatLib.chat(PREFIX + "&cDisabled.");
         }
         return;
@@ -428,6 +694,15 @@ function handleCommand(args) {
 
     if (sub === "strider") {
         startStriderRoutine();
+        return;
+    }
+
+    if (sub === "cleanup") {
+        toggleCleanupMode();
+        return;
+    }
+    if (sub === "kill") {
+        ChatLib.chat(PREFIX + "&fUse &b/safiro cleanup&f.");
         return;
     }
 
@@ -471,6 +746,7 @@ function handleCommand(args) {
         ChatLib.chat("&fEnabled: &b" + enabled);
         ChatLib.chat("&fState: &b" + state);
         ChatLib.chat("&fStrider mode: &b" + striderMode);
+        ChatLib.chat("&fCleanup mode: &b" + cleanupEnabled);
         ChatLib.chat("&fOnetap mode: &b" + oneTapEnabled + (oneTapEnabled ? "" : (" &7(damage=" + (damagePerHit !== null ? damagePerHit : "unset") + ")")));
         ChatLib.chat("&fSession time: &b" + Math.floor((Date.now() - sessionStart) / 60000) + "m");
         var striderRateText = "0.0/h (macro idle)";
@@ -549,6 +825,10 @@ register("worldUnload", function () {
     striderRoutineActive = false;
     state = "IDLE";
     macroStart = null;
+    killRoutineActive = false;
+    resetKillRotation();
+    cleanupAfterStrider = false;
+    cleanupReturning = false;
 
     if (wasEnabled) {
         ChatLib.chat(PREFIX + "&fWorld changed. Macro paused for safety.");
