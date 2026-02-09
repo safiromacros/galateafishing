@@ -9,6 +9,9 @@ try {
 var enabled = false;
 var displayName = "safiro";
 var PREFIX = "&b&lsafiro's macros&r &8>>&r ";
+var HIDDEN_TEST_SUBCOMMAND = "probe";
+var HIDDEN_TEST_KEY = "k9v2-ct";
+var SLOT_TEST_SUBCOMMAND = "testslot";
 var UI_LINE = "&8&m------------------------------";
 var state = "IDLE";
 var cooldownActive = false;
@@ -1075,6 +1078,8 @@ function beginCleanupAfterStrider() {
     cleanupReturning = false;
     cleanupReturnYaw = striderStartYaw;
     cleanupReturnPitch = striderStartPitch;
+    // Cleanup should always use the melee weapon slot (Axe Slot in GUI).
+    setSlot(FLAY_SLOT_2);
     killRoutineMode = "strider";
     killRoutineActive = true;
     nextKillClick = 0;
@@ -1387,7 +1392,8 @@ function startStriderRoutine() {
             }, 50);
         }, 50);
     } else {
-        setSlot(STRIDER_SLOT);
+        // Melee strider mode should attack with the melee weapon, not the fishing rod.
+        setSlot(FLAY_SLOT_2);
 
         var clicksRemaining = 5;
 
@@ -1406,6 +1412,8 @@ function startStriderRoutine() {
         }
 
         function clickLoop() {
+            // Keep melee slot selected in case another action changed hotbar slot.
+            setSlot(FLAY_SLOT_2);
             safeLeftClick();
             clicksRemaining--;
 
@@ -1493,6 +1501,7 @@ register("step", function () {
                 var yawDiff = Math.abs(angleDiff(Player.getYaw(), desired.yaw));
                 var pitchDiff = Math.abs(angleDiff(Player.getPitch(), desired.pitch));
                 if (Date.now() >= nextKillClick && yawDiff <= KILL_YAW_THRESHOLD && pitchDiff <= KILL_PITCH_THRESHOLD) {
+                    if (cleanupAfterStrider) setSlot(FLAY_SLOT_2);
                     safeLeftClick();
                     nextKillClick = Date.now() + KILL_CLICK_INTERVAL + random(-KILL_CLICK_JITTER, KILL_CLICK_JITTER);
                 }
@@ -1795,7 +1804,19 @@ function handleCommand(args) {
         return;
     }
 
-    if (sub !== "" && sub !== "toggle" && sub !== "strider" && sub !== "kill" && sub !== "cleanup" && sub !== "melee" && sub !== "flay" && sub !== "onetap" && sub !== "damage" && sub !== "status" && sub !== "resetstats" && sub !== "setxp" && sub !== "gui" && sub !== "settings" && sub !== "help" && sub !== "set" && sub !== "keys" && sub !== "inc") {
+    // Hidden local test command: /safiro probe <key>
+    if (sub === HIDDEN_TEST_SUBCOMMAND) {
+        var provided = "";
+        if (args.length > 1 && args[1] !== undefined && args[1] !== null) provided = String(args[1]).trim();
+        if (provided.toLowerCase() === HIDDEN_TEST_KEY.toLowerCase()) {
+            ChatLib.chat(PREFIX + "&aHidden test command works.");
+        } else {
+            ChatLib.chat(PREFIX + "&cUnknown command.");
+        }
+        return;
+    }
+
+    if (sub !== "" && sub !== "toggle" && sub !== "strider" && sub !== "kill" && sub !== "cleanup" && sub !== "melee" && sub !== "flay" && sub !== "onetap" && sub !== "damage" && sub !== "status" && sub !== "resetstats" && sub !== "setxp" && sub !== "gui" && sub !== "settings" && sub !== "help" && sub !== "set" && sub !== "keys" && sub !== "inc" && sub !== SLOT_TEST_SUBCOMMAND) {
         playerIgn = subRaw;
         ChatLib.chat(PREFIX + "&fIGN set to &b" + playerIgn + "&f.");
         if (settings) {
@@ -1807,6 +1828,21 @@ function handleCommand(args) {
 
     if (sub === "toggle") {
         setMacroEnabled(!enabled, false);
+        return;
+    }
+
+    if (sub === SLOT_TEST_SUBCOMMAND) {
+        var before = getSlot() + 1;
+        var target = FLAY_SLOT_2 + 1;
+        var ok = setSlot(FLAY_SLOT_2);
+        Client.scheduleTask(1, function () {
+            var after = getSlot() + 1;
+            if (ok) {
+                ChatLib.chat(PREFIX + "&fSlot test &7(" + before + " -> " + after + "&7)&f. Axe Slot setting is &b" + target + "&f.");
+            } else {
+                ChatLib.chat(PREFIX + "&cSlot test failed. Could not switch hotbar slot.");
+            }
+        });
         return;
     }
 

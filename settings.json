@@ -1,6 +1,6 @@
 {
   "macroEnabled": false,
-  "ign": "sigma",
+  "ign": "probe",
   "striderMode": 0,
   "cleanupEnabled": false,
   "oneTapEnabled": true,
