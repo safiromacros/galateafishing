@@ -10,7 +10,8 @@ const CONFIG_PATH = "./config/ChatTriggers/modules/GF/settings.json";
 
 const DEFAULTS = {
     macroEnabled: false,
-    ign: "",
+    ign: "safiro",
+    overlayEnabled: true,
     striderMode: 0,
     cleanupEnabled: false,
     oneTapEnabled: true,

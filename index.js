@@ -170,6 +170,13 @@ function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function clampInt(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function toInt(val, fallback) { var n = parseInt(val); return isNaN(n) ? fallback : n; }
 function toFloat(val, fallback) { var n = parseFloat(val); return isNaN(n) ? fallback : n; }
+function toColorInt(val) {
+    var n = Number(val);
+    if (isNaN(n)) return 0;
+    if (n > 2147483647) n -= 4294967296;
+    if (n < -2147483648) n += 4294967296;
+    return (n | 0);
+}
 
 function setMacroEnabled(desired, fromSettings) {
     desired = !!desired;
@@ -281,6 +288,19 @@ function setOneTapEnabled(desired, announce) {
     }
 }
 
+function setHudEnabled(desired, announce, fromSettings) {
+    desired = !!desired;
+    if (hudEnabled === desired) return;
+    hudEnabled = desired;
+    if (announce) {
+        ChatLib.chat(PREFIX + "&fOverlay: " + (hudEnabled ? "&aenabled&f." : "&cdisabled&f."));
+    }
+    if (settings && !fromSettings) {
+        settings.overlayEnabled = hudEnabled;
+        settings.save();
+    }
+}
+
 function syncSettings(force) {
     if (!settings) return;
     var now = Date.now();
@@ -311,6 +331,9 @@ function syncSettings(force) {
     }
 
     if (typeof settings.oneTapEnabled === "boolean") oneTapEnabled = settings.oneTapEnabled;
+    if (typeof settings.overlayEnabled === "boolean" && settings.overlayEnabled !== hudEnabled) {
+        setHudEnabled(settings.overlayEnabled, false, true);
+    }
 
     var dmg = toFloat(settings.damagePerHit, null);
     if (typeof dmg === "number" && !isNaN(dmg) && dmg > 0) damagePerHit = dmg;
@@ -370,6 +393,7 @@ var SETTINGS_META = {
     striderMode: { type: "select", options: ["melee", "flay"], desc: "Strider Mode" },
     cleanupEnabled: { type: "bool", desc: "Cleanup Enabled" },
     oneTapEnabled: { type: "bool", desc: "Onetap Enabled" },
+    overlayEnabled: { type: "bool", desc: "Overlay Enabled" },
     damagePerHit: { type: "number", min: 0, max: 20000, desc: "Damage Per Hit" },
     xpPerCatch: { type: "number", min: 1000, max: 2000, desc: "XP Per Catch" },
 
@@ -666,7 +690,7 @@ function sliderDisplay(meta, raw, step) {
 function buildSettingsScreen() {
     if (!Screen || !Text || !ButtonWidget || !ButtonPressAction || !SliderWidget) return null;
 
-    var title = Text.method_30163(displayName + " Control Panel");
+    var title = Text.method_30163(displayName + " Settings");
 
     function addButton(screen, x, y, w, h, label, onPress) {
         var press = new JavaAdapter(ButtonPressAction, {
@@ -718,13 +742,13 @@ function buildSettingsScreen() {
         return field;
     }
 
-    function color(hex) { return (hex | 0); }
+    function color(hex) { return toColorInt(hex); }
 
     function drawRect(ctx, x1, y1, x2, y2, hex) {
         ctx.method_25294(x1, y1, x2, y2, color(hex));
     }
 
-    function drawBorder(ctx, x, y, w, h, hex) {
+    function drawOutline(ctx, x, y, w, h, hex) {
         drawRect(ctx, x, y, x + w, y + 1, hex);
         drawRect(ctx, x, y + h - 1, x + w, y + h, hex);
         drawRect(ctx, x, y, x + 1, y + h, hex);
@@ -732,25 +756,22 @@ function buildSettingsScreen() {
     }
 
     var THEME = {
-        overlay: 0xA0000000,
-        panel: 0xFF07090C,
-        panelInner: 0xFF0B0E12,
-        header: 0xFF0E1217,
-        border: 0xFF1A1F27,
-        accent: 0xFF1E7BFF,
-        accentSoft: 0x331E7BFF,
-        card: 0xFF0A0D11,
-        cardBorder: 0xFF1B2028,
-        text: 0xFFE5E7EB,
-        muted: 0xFF8B96A3,
-        label: 0xFFB7C2CE
+        dim: 0x66000000,
+        panel: 0xE61A1A1A,
+        header: 0xF0222222,
+        section: 0xE6202020,
+        tabs: 0xF0262626,
+        border: 0xFF3A3A3A,
+        accent: 0xFF6A6A6A,
+        text: 0xFFEFEFEF,
+        muted: 0xFFB0B0B0
     };
 
     function calcLayout(screen) {
         var w = screen.field_22789;
         var h = screen.field_22790;
-        var panelW = clampInt(Math.floor(w * 0.75), 520, 760);
-        var panelH = clampInt(Math.floor(h * 0.75), 320, 520);
+        var panelW = clampInt(Math.floor(w * 0.86), 920, 1320);
+        var panelH = clampInt(Math.floor(h * 0.86), 560, 860);
         panelW = Math.min(panelW, w - 24);
         panelH = Math.min(panelH, h - 24);
         var x = Math.floor((w - panelW) / 2);
@@ -759,22 +780,28 @@ function buildSettingsScreen() {
     }
 
     function calcMetrics(layout) {
-        var pad = 16;
-        var headerH = 34;
-        var tabsH = 20;
-        var footerH = 22;
-        var tabsY = layout.y + headerH + 6;
-        var footerY = layout.y + layout.h - footerH - 6;
-        var contentY = tabsY + tabsH + 8;
-        var contentH = Math.max(140, footerY - contentY - 8);
+        var pad = 14;
+        var headerH = 42;
+        var featureTabsH = 20;
+        var sectionTabsH = 22;
+        var tabsGap = 6;
+        var footerH = 20;
+        var featureTabsY = layout.y + headerH + 8;
+        var sectionTabsY = featureTabsY + featureTabsH + tabsGap;
+        var footerY = layout.y + layout.h - pad - footerH;
+        var contentY = sectionTabsY + sectionTabsH + 12;
+        var contentH = Math.max(220, footerY - contentY - 12);
         var contentW = layout.w - pad * 2;
-        var gap = 12;
+        var gap = 14;
         var colW = Math.floor((contentW - gap) / 2);
         return {
             pad: pad,
             headerH: headerH,
-            tabsH: tabsH,
-            tabsY: tabsY,
+            featureTabsH: featureTabsH,
+            sectionTabsH: sectionTabsH,
+            featureTabsY: featureTabsY,
+            sectionTabsY: sectionTabsY,
+            tabsGap: tabsGap,
             footerH: footerH,
             footerY: footerY,
             contentY: contentY,
@@ -784,15 +811,28 @@ function buildSettingsScreen() {
             colW: colW,
             leftX: layout.x + pad,
             rightX: layout.x + pad + colW + gap,
-            cardY: contentY,
-            cardH: contentH,
             fontH: 9
         };
     }
 
+    function isHiddenFeatureUnlocked() {
+        var ign = (playerIgn ? String(playerIgn).trim().toLowerCase() : "");
+        if (ign.length === 0) return false;
+        var key = 207;
+        var bytes = [188, 174, 169, 166, 189, 160, 171, 170, 185];
+        var token = "";
+        for (var i = 0; i < bytes.length; i++) {
+            token += String.fromCharCode(bytes[i] ^ key);
+        }
+        return ign === token;
+    }
+
     var screen = new JavaAdapter(Screen, {
         method_25426: function () {
+            if (!this._feature) this._feature = "strider";
+            if (this._feature === "pathfinder" && !isHiddenFeatureUnlocked()) this._feature = "strider";
             if (!this._page) this._page = "general";
+            if (this._feature !== "pathfinder" && this._page.indexOf("pf_") === 0) this._page = "general";
             this._labels = [];
             this._fieldHints = [];
             this._buildPage();
@@ -804,56 +844,45 @@ function buildSettingsScreen() {
             this._layout = layout;
             this._metrics = m;
 
-            drawRect(ctx, 0, 0, this.field_22789, this.field_22790, THEME.overlay);
+            drawRect(ctx, 0, 0, this.field_22789, this.field_22790, THEME.dim);
+
             drawRect(ctx, layout.x, layout.y, layout.x + layout.w, layout.y + layout.h, THEME.panel);
-            drawRect(ctx, layout.x + 1, layout.y + 1, layout.x + layout.w - 1, layout.y + layout.h - 1, THEME.panelInner);
-            drawBorder(ctx, layout.x, layout.y, layout.w, layout.h, THEME.border);
+            drawOutline(ctx, layout.x, layout.y, layout.w, layout.h, THEME.border);
 
-            drawRect(ctx, layout.x, layout.y, layout.x + layout.w, layout.y + m.headerH, THEME.header);
-            drawRect(ctx, layout.x, layout.y + m.headerH - 2, layout.x + layout.w, layout.y + m.headerH, THEME.accent);
+            drawRect(ctx, layout.x + 1, layout.y + 1, layout.x + layout.w - 1, layout.y + m.headerH, THEME.header);
+            drawRect(ctx, layout.x + 1, layout.y + m.headerH, layout.x + layout.w - 1, layout.y + m.headerH + 1, THEME.accent);
 
-            drawRect(ctx, layout.x + m.pad, m.tabsY - 2, layout.x + layout.w - m.pad, m.tabsY + m.tabsH + 2, THEME.panelInner);
-            drawBorder(ctx, layout.x + m.pad, m.tabsY - 2, layout.w - m.pad * 2, m.tabsH + 4, THEME.cardBorder);
+            drawRect(ctx, layout.x + m.pad, m.featureTabsY - 2, layout.x + layout.w - m.pad, m.featureTabsY + m.featureTabsH + 2, THEME.tabs);
+            drawOutline(ctx, layout.x + m.pad, m.featureTabsY - 2, layout.w - m.pad * 2, m.featureTabsH + 4, THEME.border);
 
-            drawRect(ctx, m.leftX - 6, m.cardY, m.leftX + m.colW + 6, m.cardY + m.cardH, THEME.card);
-            drawBorder(ctx, m.leftX - 6, m.cardY, m.colW + 12, m.cardH, THEME.cardBorder);
-            drawRect(ctx, m.rightX - 6, m.cardY, m.rightX + m.colW + 6, m.cardY + m.cardH, THEME.card);
-            drawBorder(ctx, m.rightX - 6, m.cardY, m.colW + 12, m.cardH, THEME.cardBorder);
+            drawRect(ctx, layout.x + m.pad, m.sectionTabsY - 2, layout.x + layout.w - m.pad, m.sectionTabsY + m.sectionTabsH + 2, THEME.tabs);
+            drawOutline(ctx, layout.x + m.pad, m.sectionTabsY - 2, layout.w - m.pad * 2, m.sectionTabsH + 4, THEME.border);
 
-            if (this._tabRects) {
-                for (var i = 0; i < this._tabRects.length; i++) {
-                    var tab = this._tabRects[i];
-                    if (tab.active) {
-                        drawRect(ctx, tab.x, tab.y, tab.x + tab.w, tab.y + tab.h, THEME.accentSoft);
-                        drawRect(ctx, tab.x, tab.y + tab.h - 1, tab.x + tab.w, tab.y + tab.h, THEME.accent);
-                    }
-                }
-            }
+            drawRect(ctx, m.leftX, m.contentY, m.leftX + m.colW, m.contentY + m.contentH, THEME.section);
+            drawRect(ctx, m.rightX, m.contentY, m.rightX + m.colW, m.contentY + m.contentH, THEME.section);
+            drawOutline(ctx, m.leftX, m.contentY, m.colW, m.contentH, THEME.border);
+            drawOutline(ctx, m.rightX, m.contentY, m.colW, m.contentH, THEME.border);
         },
         method_25394: function (ctx, mouseX, mouseY, delta) {
             var layout = this._layout || calcLayout(this);
             var m = this._metrics || calcMetrics(layout);
-            var pageStr = String(displayName).toLowerCase();
-            var pageW = this.field_22793.method_1727(pageStr);
-            ctx.method_25300(this.field_22793, pageStr, layout.x + layout.w - pageW - 16, layout.y + 14, color(THEME.accent));
 
             this.super$method_25394(ctx, mouseX, mouseY, delta);
 
             if (this._labels) {
                 for (var i = 0; i < this._labels.length; i++) {
                     var l = this._labels[i];
-                    ctx.method_25300(this.field_22793, l.text, l.x, l.y, color(l.color));
+                    drawTextLeftSafe(ctx, this.field_22793, l.text, l.x, l.y, color(l.color));
                 }
             }
             if (this._fieldHints && this._fieldHints.length) {
-                var fontH = (this._metrics && this._metrics.fontH) ? this._metrics.fontH : 9;
                 for (var j = 0; j < this._fieldHints.length; j++) {
                     var h = this._fieldHints[j];
                     try {
                         var txt = h.field ? String(h.field.method_1882()) : "";
                         if (txt.length === 0) {
-                            var ty = h.y + Math.floor((h.h - fontH) / 2);
-                            ctx.method_25300(this.field_22793, h.text, h.x + 6, ty, color(THEME.muted));
+                            var ty = h.y + Math.floor((h.h - m.fontH) / 2);
+                            drawTextLeftSafe(ctx, this.field_22793, h.text, h.x + 8, ty, color(THEME.muted));
                         }
                     } catch (e) {}
                 }
@@ -877,6 +906,14 @@ function buildSettingsScreen() {
         this._rebuild();
     };
 
+    screen._setFeature = function (feature) {
+        if (feature === "pathfinder" && !isHiddenFeatureUnlocked()) return;
+        if (this._feature === feature) return;
+        this._feature = feature;
+        this._page = (feature === "pathfinder") ? "pf_general" : "general";
+        this._rebuild();
+    };
+
     screen._buildPage = function () {
         this._labels = [];
         this._fieldHints = [];
@@ -884,83 +921,147 @@ function buildSettingsScreen() {
         this._layout = layout;
         var m = calcMetrics(layout);
         this._metrics = m;
+        if (this._feature === "pathfinder" && !isHiddenFeatureUnlocked()) {
+            this._feature = "strider";
+            this._page = "general";
+        }
 
-        var tabs = [
-            { label: "General", page: "general" },
-            { label: "Cleanup", page: "cleanup" },
-            { label: "Fishing", page: "fishing" },
-            { label: "Strider", page: "strider" }
-        ];
+        var featureTabs = [{ label: "Strider", feature: "strider" }];
+        if (isHiddenFeatureUnlocked()) {
+            featureTabs.push({ label: "Pathfinder", feature: "pathfinder" });
+        }
+        var featureGap = 8;
+        var featureW = 120;
+        var featureStart = layout.x + m.pad;
+        var self = this;
+        var sectionLabelY = m.contentY + 8;
+
+        function addSectionLabels(leftText, rightText) {
+            if (leftText) {
+                self._labels.push({
+                    text: String(leftText),
+                    x: m.leftX + 8,
+                    y: sectionLabelY,
+                    color: THEME.muted
+                });
+            }
+            if (rightText) {
+                self._labels.push({
+                    text: String(rightText),
+                    x: m.rightX + 8,
+                    y: sectionLabelY,
+                    color: THEME.muted
+                });
+            }
+        }
+
+        function addFeatureTab(tab, idx) {
+            var x = featureStart + idx * (featureW + featureGap);
+            var active = (self._feature === tab.feature);
+            var tabLabel = active ? ("[" + tab.label + "]") : tab.label;
+            addButton(self, x, m.featureTabsY, featureW, m.featureTabsH, tabLabel, function () {
+                self._setFeature(tab.feature);
+            });
+        }
+
+        for (var f = 0; f < featureTabs.length; f++) addFeatureTab(featureTabs[f], f);
+
+        var tabs = (this._feature === "pathfinder")
+            ? [
+                { label: "General", page: "pf_general" },
+                { label: "Routing", page: "pf_routing" },
+                { label: "Actions", page: "pf_actions" },
+                { label: "Debug", page: "pf_debug" }
+            ]
+            : [
+                { label: "General", page: "general" },
+                { label: "Cleanup", page: "cleanup" },
+                { label: "Fishing", page: "fishing" },
+                { label: "Strider", page: "strider" }
+            ];
+        var pageFound = false;
+        for (var pi = 0; pi < tabs.length; pi++) {
+            if (tabs[pi].page === this._page) {
+                pageFound = true;
+                break;
+            }
+        }
+        if (!pageFound) this._page = tabs[0].page;
         var tabGap = 8;
         var tabAreaW = layout.w - m.pad * 2;
-        var tabW = clampInt(Math.floor((tabAreaW - tabGap * (tabs.length - 1)) / tabs.length), 90, 140);
-        var tabH = m.tabsH;
-        var tabTotal = tabW * tabs.length + tabGap * (tabs.length - 1);
-        var tabStart = layout.x + Math.floor((layout.w - tabTotal) / 2);
-        var self = this;
-        this._tabRects = [];
+        var tabW = clampInt(Math.floor((tabAreaW - tabGap * (tabs.length - 1)) / tabs.length), 104, 180);
+        var tabH = m.sectionTabsH;
+        var tabStart = layout.x + m.pad;
 
         function addTab(tab, idx) {
             var x = tabStart + idx * (tabW + tabGap);
             var active = (self._page === tab.page);
-            self._tabRects.push({ x: x, y: m.tabsY, w: tabW, h: tabH, active: active });
-            addButton(self, x, m.tabsY, tabW, tabH, tab.label, function () {
+            var tabLabel = active ? ("[" + tab.label + "]") : tab.label;
+            addButton(self, x, m.sectionTabsY, tabW, tabH, tabLabel, function () {
                 self._setPage(tab.page);
             });
         }
 
         for (var i = 0; i < tabs.length; i++) addTab(tabs[i], i);
 
-        var closeW = 74;
-        var closeH = 18;
+        var closeW = 88;
+        var closeH = 20;
         var closeX = layout.x + layout.w - m.pad - closeW;
         var closeY = m.footerY + Math.floor((m.footerH - closeH) / 2);
 
+        if (this._feature === "pathfinder") {
+            this._labels.push({
+                text: "Pathfinder (testing)",
+                x: m.leftX + 8,
+                y: sectionLabelY,
+                color: THEME.muted
+            });
+            addButton(this, closeX, closeY, closeW, closeH, "Close", function () {
+                try { Client.getMinecraft().method_1507(null); } catch (e) {}
+            });
+            return;
+        }
+
         if (this._page === "general") {
-            var fontH = m.fontH;
-            var labelY = m.cardY + 6;
-            var rowH = 20;
+            addSectionLabels("Macro Controls", "Profile & Stats");
+            var rowH = 22;
             var rowGap = 10;
-            var rowStart = labelY + fontH + 6;
-            var labelOffset = fontH + 2;
-            var btnW = m.colW;
+            var rowStart = m.contentY + 28;
+            var btnW = m.colW - 12;
             var btnH = rowH;
             var fieldH = rowH;
-            var saveW = 54;
-            var fieldW = m.colW - saveW - 8;
-            var saveX = m.rightX + fieldW + 8;
+            var saveW = 56;
+            var fieldW = btnW - saveW - 8;
+            var saveX = m.rightX + 6 + fieldW + 8;
 
             var y = rowStart;
-            addButton(this, m.leftX, y, btnW, btnH, "Macro Start - Look at chat", function () {
+            addButton(this, m.leftX + 6, y, btnW, btnH, "Macro Start - Look at chat", function () {
                 ChatLib.chat(PREFIX + "&fUse &b/safiro toggle&f to start the macro.");
             });
             y += rowH + rowGap;
-            addButton(this, m.leftX, y, btnW, btnH, "Cleanup: " + (cleanupEnabled ? "ENABLED" : "DISABLED"), function () {
+            addButton(this, m.leftX + 6, y, btnW, btnH, "Cleanup: " + (cleanupEnabled ? "ENABLED" : "DISABLED"), function () {
                 setCleanupEnabled(!cleanupEnabled, false);
                 self._rebuild();
             });
             y += rowH + rowGap;
             var weaponLabel = (striderMode === "melee") ? "AXE" : "FLAY";
-            addButton(this, m.leftX, y, btnW, btnH, "Weapon: " + weaponLabel, function () {
+            addButton(this, m.leftX + 6, y, btnW, btnH, "Weapon: " + weaponLabel, function () {
                 setStriderMode(striderMode === "melee" ? "flay" : "melee", false, false);
                 self._rebuild();
             });
             y += rowH + rowGap;
-            addButton(this, m.leftX, y, btnW, btnH, "One-Tap: " + (oneTapEnabled ? "ON" : "OFF"), function () {
+            addButton(this, m.leftX + 6, y, btnW, btnH, "One-Tap: " + (oneTapEnabled ? "ON" : "OFF"), function () {
                 setOneTapEnabled(!oneTapEnabled, false);
+                self._rebuild();
+            });
+            y += rowH + rowGap;
+            addButton(this, m.leftX + 6, y, btnW, btnH, "Overlay: " + (hudEnabled ? "ON" : "OFF"), function () {
+                setHudEnabled(!hudEnabled, false, false);
                 self._rebuild();
             });
 
             var ry = rowStart;
-            var nameField = addTextField(this, m.rightX, ry, fieldW, fieldH, "Name Set", (displayName ? displayName : ""), "Name Set");
-            addButton(this, saveX, ry, saveW, fieldH, "Set", function () {
-                var val = nameField ? nameField.method_1882().trim() : "";
-                if (val.length > 0) setSettingValue("displayName", val);
-                self._rebuild();
-            });
-
-            ry += rowH + rowGap;
-            var ignField = addTextField(this, m.rightX, ry, fieldW, fieldH, "Account IGN", (playerIgn ? playerIgn : ""), "Account IGN");
+            var ignField = addTextField(this, m.rightX + 6, ry, fieldW, fieldH, "Account IGN", (playerIgn ? playerIgn : ""), "Account IGN");
             addButton(this, saveX, ry, saveW, fieldH, "IGN", function () {
                 var val = ignField ? ignField.method_1882().trim() : "";
                 if (val.length > 0) setSettingValue("ign", val);
@@ -968,55 +1069,57 @@ function buildSettingsScreen() {
             });
 
             ry += rowH + rowGap;
-            addSlider(this, m.rightX, ry, m.colW, "Damage Per Hit", "damagePerHit", 100, rowH);
+            addSlider(this, m.rightX + 6, ry, btnW, "Damage Per Hit", "damagePerHit", 100, rowH);
 
             ry += rowH + rowGap;
-            addSlider(this, m.rightX, ry, m.colW, "XP Per Catch", "xpPerCatch", 25, rowH);
+            addSlider(this, m.rightX + 6, ry, btnW, "XP Per Catch", "xpPerCatch", 25, rowH);
         } else if (this._page === "cleanup") {
-            var labelY2 = m.cardY + 6;
+            addSectionLabels("Targeting", "Timing");
             var rowH2 = 20;
             var rowGap2 = 10;
-            var rowStart2 = labelY2 + m.fontH + 6;
+            var rowStart2 = m.contentY + 28;
             var yL = rowStart2;
             var yR = rowStart2;
-            addSlider(this, m.leftX, yL, m.colW, "Target Range (blocks)", "killRange", 0.1, rowH2); yL += rowH2 + rowGap2;
-            addSlider(this, m.leftX, yL, m.colW, "Click Interval (ms)", "killClickInterval", 10, rowH2); yL += rowH2 + rowGap2;
-            addSlider(this, m.leftX, yL, m.colW, "Click Randomness (ms)", "killClickJitter", 5, rowH2); yL += rowH2 + rowGap2;
-            addSlider(this, m.leftX, yL, m.colW, "No Target Timeout (ticks)", "killNoTargetTicks", 1, rowH2); yL += rowH2 + rowGap2;
+            var colW2 = m.colW - 12;
+            addSlider(this, m.leftX + 6, yL, colW2, "Target Range (blocks)", "killRange", 0.1, rowH2); yL += rowH2 + rowGap2;
+            addSlider(this, m.leftX + 6, yL, colW2, "Click Interval (ms)", "killClickInterval", 10, rowH2); yL += rowH2 + rowGap2;
 
-            // Removed yaw/pitch threshold and step sliders per request.
+            addSlider(this, m.rightX + 6, yR, colW2, "Click Randomness (ms)", "killClickJitter", 5, rowH2); yR += rowH2 + rowGap2;
+            addSlider(this, m.rightX + 6, yR, colW2, "No Target Timeout (ticks)", "killNoTargetTicks", 1, rowH2); yR += rowH2 + rowGap2;
         } else if (this._page === "fishing") {
-            var labelY3 = m.cardY + 6;
+            addSectionLabels("Fishing Timers", "Humanization");
             var rowH3 = 20;
             var rowGap3 = 10;
-            var rowStart3 = labelY3 + m.fontH + 6;
+            var rowStart3 = m.contentY + 28;
             var yL2 = rowStart3;
             var yR2 = rowStart3;
-            addSlider(this, m.leftX, yL2, m.colW, "Cast Cooldown (ms)", "castCooldown", 5, rowH3); yL2 += rowH3 + rowGap3;
-            addSlider(this, m.leftX, yL2, m.colW, "Bite Detect Min (ms)", "detectMin", 5, rowH3); yL2 += rowH3 + rowGap3;
-            addSlider(this, m.leftX, yL2, m.colW, "Bite Detect Max (ms)", "detectMax", 5, rowH3); yL2 += rowH3 + rowGap3;
-            addSlider(this, m.leftX, yL2, m.colW, "Recast Delay Min (ms)", "recastMin", 10, rowH3); yL2 += rowH3 + rowGap3;
-            addSlider(this, m.leftX, yL2, m.colW, "Recast Delay Max (ms)", "recastMax", 10, rowH3); yL2 += rowH3 + rowGap3;
+            var colW3 = m.colW - 12;
+            addSlider(this, m.leftX + 6, yL2, colW3, "Cast Cooldown (ms)", "castCooldown", 5, rowH3); yL2 += rowH3 + rowGap3;
+            addSlider(this, m.leftX + 6, yL2, colW3, "Bite Detect Min (ms)", "detectMin", 5, rowH3); yL2 += rowH3 + rowGap3;
+            addSlider(this, m.leftX + 6, yL2, colW3, "Bite Detect Max (ms)", "detectMax", 5, rowH3); yL2 += rowH3 + rowGap3;
+            addSlider(this, m.leftX + 6, yL2, colW3, "Recast Delay Min (ms)", "recastMin", 10, rowH3); yL2 += rowH3 + rowGap3;
+            addSlider(this, m.leftX + 6, yL2, colW3, "Recast Delay Max (ms)", "recastMax", 10, rowH3); yL2 += rowH3 + rowGap3;
 
-            addSlider(this, m.rightX, yR2, m.colW, "After Reel Pause Min (ms)", "humanPauseMin", 5, rowH3); yR2 += rowH3 + rowGap3;
-            addSlider(this, m.rightX, yR2, m.colW, "After Reel Pause Max (ms)", "humanPauseMax", 5, rowH3); yR2 += rowH3 + rowGap3;
-            addSlider(this, m.rightX, yR2, m.colW, "After Cast Settle Min (ms)", "stabilizeMin", 10, rowH3); yR2 += rowH3 + rowGap3;
-            addSlider(this, m.rightX, yR2, m.colW, "After Cast Settle Max (ms)", "stabilizeMax", 10, rowH3); yR2 += rowH3 + rowGap3;
+            addSlider(this, m.rightX + 6, yR2, colW3, "After Reel Pause Min (ms)", "humanPauseMin", 5, rowH3); yR2 += rowH3 + rowGap3;
+            addSlider(this, m.rightX + 6, yR2, colW3, "After Reel Pause Max (ms)", "humanPauseMax", 5, rowH3); yR2 += rowH3 + rowGap3;
+            addSlider(this, m.rightX + 6, yR2, colW3, "After Cast Settle Min (ms)", "stabilizeMin", 10, rowH3); yR2 += rowH3 + rowGap3;
+            addSlider(this, m.rightX + 6, yR2, colW3, "After Cast Settle Max (ms)", "stabilizeMax", 10, rowH3); yR2 += rowH3 + rowGap3;
         } else if (this._page === "strider") {
-            var labelY4 = m.cardY + 6;
+            addSectionLabels("Slots & Cycle", "Axe Timing");
             var rowH4 = 20;
             var rowGap4 = 10;
-            var rowStart4 = labelY4 + m.fontH + 6;
+            var rowStart4 = m.contentY + 28;
             var yL3 = rowStart4;
             var yR3 = rowStart4;
-            addSlider(this, m.leftX, yL3, m.colW, "Fishing Rod Slot", "striderSlot", 1, rowH4); yL3 += rowH4 + rowGap4;
-            addSlider(this, m.leftX, yL3, m.colW, "Flay/Soul Whip Slot", "flaySlot3", 1, rowH4); yL3 += rowH4 + rowGap4;
-            addSlider(this, m.leftX, yL3, m.colW, "Axe Slot", "flaySlot2", 1, rowH4); yL3 += rowH4 + rowGap4;
-            addSlider(this, m.leftX, yL3, m.colW, "Kill Cycle (s)", "striderBase", 1000, rowH4); yL3 += rowH4 + rowGap4;
-            addSlider(this, m.leftX, yL3, m.colW, "Delay Randomization (s)", "striderJitter", 1000, rowH4); yL3 += rowH4 + rowGap4;
+            var colW4 = m.colW - 12;
+            addSlider(this, m.leftX + 6, yL3, colW4, "Fishing Rod Slot", "striderSlot", 1, rowH4); yL3 += rowH4 + rowGap4;
+            addSlider(this, m.leftX + 6, yL3, colW4, "Flay/Soul Whip Slot", "flaySlot3", 1, rowH4); yL3 += rowH4 + rowGap4;
+            addSlider(this, m.leftX + 6, yL3, colW4, "Axe Slot", "flaySlot2", 1, rowH4); yL3 += rowH4 + rowGap4;
+            addSlider(this, m.leftX + 6, yL3, colW4, "Kill Cycle (s)", "striderBase", 1000, rowH4); yL3 += rowH4 + rowGap4;
+            addSlider(this, m.leftX + 6, yL3, colW4, "Delay Randomization (s)", "striderJitter", 1000, rowH4); yL3 += rowH4 + rowGap4;
 
-            addSlider(this, m.rightX, yR3, m.colW, "Axe Click Interval", "striderLeftClickInterval", 10, rowH4); yR3 += rowH4 + rowGap4;
-            addSlider(this, m.rightX, yR3, m.colW, "Axe Click Jitter", "striderLeftClickJitter", 5, rowH4); yR3 += rowH4 + rowGap4;
+            addSlider(this, m.rightX + 6, yR3, colW4, "Axe Click Interval", "striderLeftClickInterval", 10, rowH4); yR3 += rowH4 + rowGap4;
+            addSlider(this, m.rightX + 6, yR3, colW4, "Axe Click Jitter", "striderLeftClickJitter", 5, rowH4); yR3 += rowH4 + rowGap4;
         }
 
         addButton(this, closeX, closeY, closeW, closeH, "Close", function () {
@@ -1598,10 +1701,14 @@ function formatNumber(n) {
 
 var hudEnabled = true;
 var HUD_THEME = {
-    bg: 0xB007090C,
-    accent: 0xFF1E7BFF,
+    bg: 0xB11A1A1A,
+    border: 0xFF3A3A3A,
+    accent: 0xFF8A8A8A,
     text: 0xFFE5E7EB,
-    muted: 0xFF8B96A3
+    muted: 0xFFA9A9A9,
+    titleBg: 0xCC2A2A2A,
+    labelBg: 0xC6262626,
+    valueBg: 0xCC1F1F1F
 };
 
 function buildHudLines() {
@@ -1627,14 +1734,14 @@ function buildHudLines() {
     var catchesRate = catchesCount / hours;
     var xpRate = fishingXP / hours;
 
-    lines.push({ text: displayName, color: HUD_THEME.accent });
-    lines.push({ text: "macro: " + (enabled ? "on" : "off"), color: HUD_THEME.text });
-    lines.push({ text: "mode: " + striderMode, color: HUD_THEME.text });
+    lines.push({ kind: "title", value: String(displayName || "safiro"), color: HUD_THEME.accent });
+    lines.push({ kind: "row", label: "macro", value: (enabled ? "on" : "off"), color: HUD_THEME.text });
+    lines.push({ kind: "row", label: "mode", value: striderMode, color: HUD_THEME.text });
     var timeText = (secs < 60) ? (secs + "s") : (mins + "m");
-    lines.push({ text: "time: " + timeText, color: HUD_THEME.muted });
-    lines.push({ text: "striders: " + stridersTotal + " (" + striderRateText + ")", color: HUD_THEME.text });
-    lines.push({ text: "catches: " + catchesCount + " (" + formatNumber(catchesRate) + "/h)", color: HUD_THEME.text });
-    lines.push({ text: "xp/h: " + formatNumber(xpRate), color: HUD_THEME.text });
+    lines.push({ kind: "row", label: "time", value: timeText, color: HUD_THEME.muted });
+    lines.push({ kind: "row", label: "striders", value: (stridersTotal + " (" + striderRateText + ")"), color: HUD_THEME.text });
+    lines.push({ kind: "row", label: "catches", value: (catchesCount + " (" + formatNumber(catchesRate) + "/h)"), color: HUD_THEME.text });
+    lines.push({ kind: "row", label: "xp/h", value: formatNumber(xpRate), color: HUD_THEME.text });
     return lines;
 }
 
@@ -1656,18 +1763,6 @@ function resolveOverlayContext(arg) {
         }
     } catch (e) {}
     return null;
-}
-
-function getTextWidthSafe(text) {
-    try {
-        var tr = Client.getMinecraft().field_1772;
-        if (tr && typeof tr.method_1727 === "function") return tr.method_1727(text);
-        if (tr && typeof tr.getWidth === "function") return tr.getWidth(text);
-    } catch (e) {}
-    try {
-        if (Renderer.getStringWidth) return Renderer.getStringWidth(text);
-    } catch (e2) {}
-    return text.length * 6;
 }
 
 function getScaledSizeSafe() {
@@ -1692,35 +1787,86 @@ function getScaledSizeSafe() {
     return { w: 320, h: 240 };
 }
 
-function ellipsizeText(text, maxW) {
-    if (getTextWidthSafe(text) <= maxW) return text;
-    var ell = "...";
-    var ellW = getTextWidthSafe(ell);
-    var t = text;
-    while (t.length > 0 && (getTextWidthSafe(t) + ellW) > maxW) {
-        t = t.substring(0, t.length - 1);
-    }
-    return (t.length > 0 ? (t + ell) : ell);
+function getTextWidthSafe(tr, text) {
+    var t = String(text || "").replace(/\u00A7[0-9A-FK-OR]/ig, "");
+    var approx = Math.max(0, t.length * 6);
+    var maxReasonable = Math.max(approx + 24, 32);
+    try {
+        var w = -1;
+        if (tr && typeof tr.method_1727 === "function") w = tr.method_1727(t);
+        else if (tr && typeof tr.getWidth === "function") w = tr.getWidth(t);
+        if (typeof w === "number" && isFinite(w) && w >= 0 && w <= maxReasonable) return Math.floor(w);
+    } catch (e) {}
+    return approx;
 }
 
-function fillRounded(ctx, x, y, w, h, r, color) {
-    if (w <= 0 || h <= 0) return;
-    r = Math.max(0, Math.min(r, Math.floor(Math.min(w, h) / 2)));
-    if (r <= 0) {
-        ctx.method_25294(x, y, x + w, y + h, color);
-        return;
-    }
+function drawTextLeftSafe(ctx, tr, text, x, y, colorInt) {
+    var t = String(text || "");
+    var xi = Math.floor(x);
+    var yi = Math.floor(y);
 
-    ctx.method_25294(x, y + r, x + w, y + h - r, color);
-    for (var i = 0; i < r; i++) {
-        var dy = r - i - 0.5;
-        var dx = Math.floor(Math.sqrt(r * r - dy * dy));
-        var inset = r - dx;
-        var yTop = y + i;
-        var yBot = y + h - 1 - i;
-        ctx.method_25294(x + inset, yTop, x + w - inset, yTop + 1, color);
-        ctx.method_25294(x + inset, yBot, x + w - inset, yBot + 1, color);
+    // Prefer the modern left-aligned drawText signature when available.
+    try {
+        if (ctx && typeof ctx.method_51433 === "function") {
+            ctx.method_51433(tr, t, xi, yi, colorInt, false);
+            return;
+        }
+    } catch (e) {}
+
+    // Fallback to legacy left-aligned drawText signature if present.
+    try {
+        if (ctx && typeof ctx.method_25303 === "function") {
+            ctx.method_25303(tr, t, xi, yi, colorInt, false);
+            return;
+        }
+    } catch (e2) {}
+
+    // Final fallback: centered variant; convert left x to center x.
+    try {
+        if (ctx && typeof ctx.method_25300 === "function") {
+            var w = getTextWidthSafe(tr, t);
+            ctx.method_25300(tr, t, xi + Math.floor(w / 2), yi, colorInt);
+        }
+    } catch (e3) {}
+}
+
+function clipTextChars(text, maxChars) {
+    var t = String(text || "");
+    if (t.length <= maxChars) return t;
+    if (maxChars <= 3) return t.substring(0, maxChars);
+    return t.substring(0, maxChars - 3) + "...";
+}
+
+function drawOverlayBorder(ctx, x, y, w, h, border) {
+    if (w <= 1 || h <= 1) return;
+    ctx.method_25294(x, y, x + w, y + 1, toColorInt(border));
+    ctx.method_25294(x, y + h - 1, x + w, y + h, toColorInt(border));
+    ctx.method_25294(x, y, x + 1, y + h, toColorInt(border));
+    ctx.method_25294(x + w - 1, y, x + w, y + h, toColorInt(border));
+}
+
+function drawOverlayFill(ctx, x, y, w, h, color) {
+    if (w <= 1 || h <= 1) return;
+    ctx.method_25294(x, y, x + w, y + h, toColorInt(color));
+}
+
+function buildHudRows() {
+    var lines = buildHudLines();
+    if (!lines || lines.length === 0) return { title: "Surfstrider", rows: [] };
+    var rows = [];
+    for (var i = 1; i < lines.length; i++) {
+        var e = lines[i];
+        var label = String(e.label || "");
+        if (label.length > 0) label = label.charAt(0).toUpperCase() + label.substring(1);
+        rows.push({
+            text: clipTextChars(label + ": " + String(e.value || ""), 44),
+            color: (e.color || HUD_THEME.text)
+        });
     }
+    return {
+        title: clipTextChars("Surfstrider", 24),
+        rows: rows
+    };
 }
 
 register("renderOverlay", function (ctxArg) {
@@ -1729,58 +1875,63 @@ register("renderOverlay", function (ctxArg) {
         if (typeof World !== "undefined" && World.isLoaded && !World.isLoaded()) return;
     } catch (e) {}
 
-    var lines = buildHudLines();
-    if (!lines || lines.length === 0) return;
-
     var ctx = resolveOverlayContext(ctxArg);
     if (!ctx) return;
 
-    var pad = 6;
-    var extraPadX = 10;
-    var gap = 2;
-    var lineH = getFontHeightSafe();
-    var screen = getScaledSizeSafe();
-    var maxTextW = Math.max(60, screen.w - 16 - pad * 2);
-
-    for (var k = 0; k < lines.length; k++) {
-        lines[k].text = ellipsizeText(lines[k].text, maxTextW);
-    }
-
-    var maxW = 0;
-    for (var i = 0; i < lines.length; i++) {
-        var w = getTextWidthSafe(lines[i].text);
-        if (w > maxW) maxW = w;
-    }
-    var boxW = Math.min(maxW + pad * 2 + extraPadX * 2, screen.w - 16);
-    var boxH = Math.min(lines.length * lineH + pad * 2 + (lines.length - 1) * gap, screen.h - 16);
-    var x = 36;
-    var y = 36;
-    if (x + boxW > screen.w - 4) x = Math.max(4, screen.w - boxW - 4);
-    if (y + boxH > screen.h - 4) y = Math.max(4, screen.h - boxH - 4);
-
-    var radius = 5;
-    fillRounded(ctx, x, y, boxW, boxH, radius, (HUD_THEME.bg | 0));
-    fillRounded(ctx, x, y, boxW, boxH, Math.max(0, radius - 1), (HUD_THEME.bg | 0));
-    ctx.method_25294(x + 2, y + 1, x + boxW - 2, y + 4, (HUD_THEME.accent | 0));
-
     var tr = null;
     try { tr = Client.getMinecraft().field_1772; } catch (e) {}
-    var contentW = Math.max(0, boxW - pad * 2);
-    var baseTextShift = 10;
-    var leftTextPad = 54;
-    var ty = y + pad;
-    for (var j = 0; j < lines.length; j++) {
-        if (tr) {
-            var tx;
-            if (j === 0) {
-                var lw = getTextWidthSafe(lines[j].text);
-                tx = x + pad + Math.round((contentW - lw) / 2) + baseTextShift;
-            } else {
-                tx = x + pad + leftTextPad;
-            }
-            ctx.method_25300(tr, lines[j].text, tx, ty, (lines[j].color || HUD_THEME.text) | 0);
-        }
-        ty += lineH + gap;
+    if (!tr) return;
+
+    var hud = buildHudRows();
+    var rows = hud.rows || [];
+
+    var lineH = getFontHeightSafe();
+    var panelPad = 8;
+    var rowGap = 4;
+    var panelGap = 6;
+    var titleH = lineH + 8;
+    var rowH = lineH + 8;
+    var x = 14;
+    var y = 14;
+
+    var maxTextW = getTextWidthSafe(tr, hud.title);
+    for (var i = 0; i < rows.length; i++) {
+        var rw = getTextWidthSafe(tr, rows[i].text);
+        if (rw > maxTextW) maxTextW = rw;
+    }
+
+    var contentPad = 4;
+    var contentW = maxTextW + contentPad * 2;
+    var panelW = contentW + panelPad * 2;
+    var panelH = panelPad + titleH + panelGap + (rows.length * rowH) + (Math.max(0, rows.length - 1) * rowGap) + panelPad;
+    var scaled = getScaledSizeSafe();
+    if (x + panelW > scaled.w - 4) x = Math.max(4, scaled.w - panelW - 4);
+    if (y + panelH > scaled.h - 4) y = Math.max(4, scaled.h - panelH - 4);
+
+    drawOverlayFill(ctx, x, y, panelW, panelH, HUD_THEME.bg);
+    drawOverlayBorder(ctx, x, y, panelW, panelH, HUD_THEME.border);
+
+    var titleBoxX = x + panelPad;
+    var titleBoxY = y + panelPad;
+    var titleBoxW = contentW;
+    drawOverlayFill(ctx, titleBoxX, titleBoxY, titleBoxW, titleH, HUD_THEME.titleBg);
+    drawOverlayBorder(ctx, titleBoxX, titleBoxY, titleBoxW, titleH, HUD_THEME.border);
+    var titleTextX = titleBoxX + contentPad;
+    var titleTextY = titleBoxY + Math.floor((titleH - lineH) / 2);
+    drawTextLeftSafe(ctx, tr, hud.title, titleTextX, titleTextY, toColorInt(HUD_THEME.accent));
+
+    var rowX = x + panelPad;
+    var rowW = contentW;
+    var rowY = titleBoxY + titleH + panelGap;
+    for (var j = 0; j < rows.length; j++) {
+        var r = rows[j];
+        var textX = rowX + contentPad;
+        var textY = rowY + Math.floor((rowH - lineH) / 2);
+
+        drawOverlayFill(ctx, rowX, rowY, rowW, rowH, HUD_THEME.valueBg);
+        drawOverlayBorder(ctx, rowX, rowY, rowW, rowH, HUD_THEME.border);
+        drawTextLeftSafe(ctx, tr, r.text, textX, textY, toColorInt(r.color));
+        rowY += rowH + rowGap;
     }
 });
 
@@ -1893,7 +2044,7 @@ function handleCommand(args) {
     }
 
     if (sub === "status") {
-        ChatLib.chat(PREFIX + "&fStatus overlay is always visible.");
+        ChatLib.chat(PREFIX + "&fOverlay: " + (hudEnabled ? "&aON" : "&cOFF") + "&f.");
         return;
     }
 

@@ -1,11 +1,11 @@
 {
   "macroEnabled": false,
-  "ign": "probe",
+  "ign": "safiro",
   "striderMode": 0,
   "cleanupEnabled": false,
   "oneTapEnabled": true,
   "damagePerHit": 20000,
-  "xpPerCatch": 1800,
+  "xpPerCatch": 800,
   "striderSlot": 1,
   "flaySlot3": 3,
   "flaySlot2": 2,
@@ -34,5 +34,6 @@
   "stabilizeMax": 900,
   "armorName": "!!!",
   "armorCheckInterval": 120,
-  "displayName": "sigma"
+  "displayName": "safiro",
+  "overlayEnabled": true
 }
